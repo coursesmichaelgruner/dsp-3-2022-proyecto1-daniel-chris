@@ -33,9 +33,9 @@ Fs = 8000.0
 n = np.arange(duration*Fs)
 
 match window:
-    case "h":
+    case "hann":
         win = (1-np.cos(2*np.pi*n/(duration*Fs)))/2
-    case "t":
+    case "triag":
         win = 1-abs((n-duration*Fs/2)/((Fs*duration+1)/2))
     case _:
         win = 1
