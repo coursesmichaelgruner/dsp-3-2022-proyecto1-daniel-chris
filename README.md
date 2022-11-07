@@ -24,3 +24,6 @@ cd proj
 make
 ./jack -c
 ```
+
+#DEMO
+https://drive.google.com/file/d/1JpVwP3bYcwxYNasx4WXDnPN0oWWT0Gh_/view?usp=share_link
