@@ -31,14 +31,13 @@ keyboard = {'1':[697,1209],
 Fs = 8000.0
 
 n = np.arange(duration*Fs)
-
-match window:
-    case "hann":
-        win = (1-np.cos(2*np.pi*n/(duration*Fs)))/2
-    case "triag":
-        win = 1-abs((n-duration*Fs/2)/((Fs*duration+1)/2))
-    case _:
-        win = 1
+print(n)
+if window == "hann":
+    win = (1-np.cos(2*np.pi*n/(duration*Fs)))/2
+elif window == "triag":
+    win = 1-abs((n-duration*Fs/2)/((Fs*duration+1)/2))
+else:
+    win = 1
 
 while(True):
     key = getch.getch()
