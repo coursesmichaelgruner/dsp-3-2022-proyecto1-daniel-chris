@@ -46,6 +46,13 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
+#include <pthread.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <mqueue.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <unistd.h>
 
 /**
  * You may need some global values 
@@ -68,9 +75,16 @@ static int gFs;
 void gInit(unsigned int Fs, float *d, float *c);
 void gFilter (float *d, float in, float coeff);
 void gFreqDetect(int *keyIndex, float *d, float *c, float threshhold);
-void checkKey(char* key, int keyIndex);
+int checkKey(char* key, int keyIndex);
 void dtmfFreq(const float *data, float *d, float *c, int frameSize);
 
+void *controller(void *data);
+
+#define QNAME "/DTMF"
+
+pthread_t controller_th;
+int audio_fd;
+mqd_t tq;
 
 /**
  * This method is called before the real processing starts.
@@ -81,13 +95,31 @@ void init(const unsigned int Fs) {
   gInit(Fs, &d[0][0], coef);
 
   // Encoder init
-  lowShift=f2p(697.0, Fs);
+  lowShift=f2p(770.0, Fs);
   highShift=f2p(1209.0,Fs);
   lowPhase=0;
   highPhase=0;
 
   key='\0';
   prevKey='\0';
+
+  audio_fd = -1;
+
+  // Controller thread
+  mq_unlink(QNAME);
+  struct mq_attr attr;
+  attr.mq_flags=0;
+  attr.mq_maxmsg=2;
+  attr.mq_msgsize=1;
+  attr.mq_curmsgs=0;
+  tq = mq_open(QNAME, O_WRONLY|O_CREAT,0600,&attr);
+  if (tq<0) {
+    perror("mq_open");
+    exit(1);
+  }
+  pthread_create(&controller_th, NULL, controller, (void*)&audio_fd);
+
+  
 }
 
 /**
@@ -114,6 +146,16 @@ int process(const unsigned int Fs,
   int n;
 
   // Encode
+  if (audio_fd>=0) {
+  int count=read(audio_fd,out,nframes*sizeof(float));
+    if (count<nframes*sizeof(float)) {
+      bzero(&out[count],nframes*sizeof(float)-count);
+      close (audio_fd);
+      audio_fd = -1;
+    }
+  } else bzero(out, nframes*sizeof(float));
+  
+/*
   for (n=0; n<nframes; n++) {
     out[n]=0.25*(cos(lowPhase)+cos(highPhase));
     lowPhase+=lowShift;
@@ -121,13 +163,16 @@ int process(const unsigned int Fs,
     highPhase+=highShift;
     if (highPhase>2.0*M_PI) highPhase-=2.0*M_PI;
   }
+*/
 
   // Decode
   dtmfFreq(in, &d[0][0], coef, nframes);
   keyIndex=0;
   gFreqDetect(&keyIndex, &d[0][0], coef, THRESHHOLD);
-  checkKey(&key, keyIndex);
-  if (key) printf("Key: %c\n",key);
+  if (checkKey(&key, keyIndex)) {
+    printf("Key: %c\n",key);
+    mq_send(tq, &key,  sizeof(key), 1);
+  }
 
   /* Debug stuff */
   /*
@@ -204,7 +249,8 @@ enum {
   KEY_POUND = 0x40|0x08,
 };
 
-void checkKey(char* key, int keyIndex) {
+int checkKey(char* key, int keyIndex) {
+  static char prevKey='\0';
   switch(keyIndex) {
     case KEY_1: *key='1'; break;
     case KEY_2: *key='2'; break;
@@ -220,6 +266,9 @@ void checkKey(char* key, int keyIndex) {
     case KEY_POUND: *key='#'; break;
     default: *key='\0';
   }
+  int retval=(*key && (*key!=prevKey));
+  prevKey=*key;
+  return retval;
 }
 
 void dtmfFreq(const float *data, float *d, float *c, int frameSize) {
@@ -233,6 +282,141 @@ void dtmfFreq(const float *data, float *d, float *c, int frameSize) {
     for (i=0;i<7;i++) {
       gFilter(dd,x,c[i]);
       dd+=3;
+    }
+  }
+}
+
+typedef enum STATE {
+  WAIT_DIAL,
+  WELCOME,
+  PW_VAL,
+  MENU,
+  MSG_PLAYBACK,
+  PW_CHANGE,
+} STATE;
+
+static char password[5];
+
+int validation(char key) {
+  static char pwdBuf[5]="0000";
+  static int p=0;
+  if (!key) {
+    p=0;
+  } else {
+    pwdBuf[p++]=key;
+  }
+  if (p==4) {
+    if (!strncmp(password, pwdBuf, strlen(password))) {
+      return 1;
+    } else return -1;
+  }
+  return 0;
+}
+
+int nueva(char key) {
+  static char pwdBuf[5]="0000";
+  static int p=0;
+  if (!key) {
+    p=0;
+  } else {
+    pwdBuf[p++]=key;
+  }
+  if (p==4) {
+    snprintf(password,sizeof(password),"%s",pwdBuf);
+    return 1;
+  } else return 0;
+}
+
+void play(int *audio_fd, char* name) {
+  while (*audio_fd>=0) usleep(100);
+  int fd=open(name, O_RDONLY, 0);
+  if (fd<0) {
+    perror("open");
+    return;
+  }
+  *audio_fd = fd;
+}
+
+void readPassword(int *audio_fd) {
+  for (int i=0; i<4; i++) {
+    char buf[128];
+    snprintf(buf,sizeof(buf),"audios/%c.raw",password[i]);
+    play(audio_fd,buf);
+  }
+}
+
+void *controller(void *data) {
+  snprintf(password,sizeof(password),"0000");
+  static STATE curr_state=WAIT_DIAL;
+
+  mqd_t rq = mq_open(QNAME, O_RDONLY|O_CREAT, 0600, NULL);
+  if (rq<0) {
+    perror("mq_open");
+  }
+  printf("Controller thread started");
+  for (;;) {
+    char key;
+//fscanf(stdin,"%c",&key);
+//if (!isalnum(key)) continue;
+    if (mq_receive(rq, &key, sizeof(key), NULL)<0) {
+      perror("mq_receive");
+    }
+    printf("CONTROLLER: %c\n",key);
+    switch(curr_state) {
+      case WAIT_DIAL:
+        printf("Welcome, enter password!\n");
+        play (&audio_fd,"audios/WELCOME.raw");
+        validation(0);
+        curr_state = PW_VAL;
+        break;
+      case PW_VAL:
+        switch (validation(key)) {
+          case 1:
+            printf("Options\n");
+            play(&audio_fd, "audios/OPTIONS.raw");
+            curr_state = MENU;
+            break;
+          case 0:
+            break;
+          case -1:
+            printf("Blocked\n");
+            play(&audio_fd,"audios/BLOCKED.raw");
+            validation(0);
+            break;
+        }
+        break;
+      case MENU:
+        switch(key) {
+          case '1':
+            printf("No hay mensajes\n");
+            play(&audio_fd,"audios/MSGS.raw");
+            break;
+          case '2':
+            printf("Instrucciones para cambiar password\n");
+            play(&audio_fd,"audios/CHG_PASSWORD.raw");
+            nueva(0);
+            curr_state = PW_CHANGE;
+            break;
+          case '0':
+            printf("Goodbye\n");
+            curr_state = WAIT_DIAL;
+            break;
+          default:
+            printf("Options\n");
+            play(&audio_fd, "audios/OPTIONS.raw");
+            break;
+        }
+        break;
+      case PW_CHANGE:
+        if (nueva(key)) {
+          printf("New password is: %s\n",password);
+          play(&audio_fd,"audios/NEW_PASSWORD.raw");
+          readPassword(&audio_fd);
+          printf("Options\n");
+          play(&audio_fd, "audios/OPTIONS.raw");
+          curr_state = MENU;
+        }
+        break;
     }
   }
 }

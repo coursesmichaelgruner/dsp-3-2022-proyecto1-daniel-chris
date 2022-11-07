@@ -286,7 +286,7 @@ main (int argc, char *argv[])
         
         /* Already an update was done!  now should we start reading stuff? */
         if (firstTime != 0) {
-          printf("\nFirst time: read all\n");
+          //printf("\nFirst time: read all\n");
           fflush(stdout);
 
           firstTime = 0;
@@ -299,12 +299,12 @@ main (int argc, char *argv[])
             ok=0;
           } else {
             /* we have to read the second half */
-            printf("\nReading second half...");
+            //printf("\nReading second half...");
             fflush(stdout);
 
             abortRQ=readFile(data.rawBuffer+halfBuffer,halfBuffer);
 
-            printf(" done.\n");
+            //printf(" done.\n");
             fflush(stdout);
 
           }
@@ -313,19 +313,19 @@ main (int argc, char *argv[])
             ok=0;
           } else {
             /* we have to read the first half */
-            printf("\nReading first half...");
+            //printf("\nReading first half...");
             fflush(stdout);
 
             abortRQ=readFile(data.rawBuffer,halfBuffer);
 
-            printf(" done.\n");
+            //printf(" done.\n");
             fflush(stdout);
 
           }
         }
       }
     } else {
-      printf("%c\r",progbar[progidx++&3]);
+      //printf("%c\r",progbar[progidx++&3]);
       fflush(stdout);
     }
 
