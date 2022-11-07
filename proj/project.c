@@ -66,7 +66,7 @@ static float highPhase;
 static float d[7][3];
 static float coef[7];
 #define DTMF_FRAME 990
-#define THRESHHOLD 0.1
+#define THRESHHOLD 0.5
 static int keyIndex;
 static char key;
 static char prevKey;
@@ -335,6 +335,7 @@ void play(int *audio_fd, char* name) {
     return;
   }
   *audio_fd = fd;
+  while (*audio_fd>=0) usleep(100);
 }
 
 void readPassword(int *audio_fd) {
@@ -380,7 +381,7 @@ void *controller(void *data) {
             break;
           case -1:
             printf("Blocked\n");
-            play(&audio_fd,"audios/BLOCKED.raw");
+            play(&audio_fd,"audios/BLOCK.raw");
             validation(0);
             break;
         }
